@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Calcolatrice TUI: display in alto e griglia di tasti come una calcolatrice GUI."""
+import curses
+import sys
+
+BUTTONS = [
+    ["C", "DEL", "(", ")"],
+    ["7", "8", "9", "/"],
+    ["4", "5", "6", "*"],
+    ["1", "2", "3", "-"],
+    ["0", ".", "=", "+"],
+]
+ROWS, COLS = len(BUTTONS), len(BUTTONS[0])
+BW, BH = 8, 3
+GRID_W, GRID_H = COLS * BW, ROWS * BH
+DISP_H = 4
+TOTAL_W = GRID_W
+TOTAL_H = DISP_H + 1 + GRID_H
+ALLOWED = set("0123456789.+-*/()%")
+FOCUS = {label: (r, c) for r, row in enumerate(BUTTONS) for c, label in enumerate(row)}
+HINT = "frecce: muovi   spazio: premi   invio: calcola   q: esci"
+
+
+def evaluate(text):
+    if not text or "**" in text or set(text) - ALLOWED:
+        return "Error"
+    try:
+        value = eval(text, {"__builtins__": {}}, {})
+    except Exception:
+        return "Error"
+    if isinstance(value, float):
+        if value.is_integer():
+            return str(int(value))
+        return str(round(value, 10))
+    return str(value)
+
+
+def press(label, entry, shown):
+    """Applica un tasto: ritorna (espressione, risultato mostrato)."""
+    if label == "C":
+        return "", None
+    if label == "DEL":
+        return entry[:-1], None
+    if label == "=":
+        return entry, (evaluate(entry) if entry else None)
+    if shown is not None:
+        entry = shown if label in "+-*/" else ""
+    return entry + label, None
+
+
+def put_text(win, y, x, width, text, attr=0):
+    text = text[-width:] if len(text) > width else text
+    if text:
+        win.addstr(y, x + width - len(text), text, attr)
+
+
+def box(win, y, x, w, h, attr=0):
+    win.addstr(y, x, "\u250c" + "\u2500" * (w - 2) + "\u2510", attr)
+    for i in range(1, h - 1):
+        win.addstr(y + i, x, "\u2502" + " " * (w - 2) + "\u2502", attr)
+    win.addstr(y + h - 1, x, "\u2514" + "\u2500" * (w - 2) + "\u2518", attr)
+
+
+def draw(win, h, w, entry, shown, expr, sel):
+    if h < TOTAL_H or w < TOTAL_W:
+        win.addstr(0, 0, "Terminale troppo piccolo"[: max(0, w - 1)])
+        return
+    y0, x0 = (h - TOTAL_H) // 2, (w - TOTAL_W) // 2
+    box(win, y0, x0, TOTAL_W, DISP_H)
+    put_text(win, y0 + 1, x0 + 1, TOTAL_W - 2, expr, curses.A_DIM)
+    put_text(win, y0 + 2, x0 + 1, TOTAL_W - 2, shown or entry or "0", curses.A_BOLD)
+    gy = y0 + DISP_H + 1
+    for r, row in enumerate(BUTTONS):
+        for c, label in enumerate(row):
+            y, x = gy + r * BH, x0 + c * BW
+            attr = curses.color_pair(1) if (r, c) == sel else 0
+            box(win, y, x, BW, BH, attr)
+            win.addstr(y + 1, x + 1 + (BW - 2 - len(label)) // 2, label, attr | curses.A_BOLD)
+    if h > TOTAL_H and w >= len(HINT):
+        win.addstr(y0 + TOTAL_H, x0, HINT, curses.A_DIM)
+
+
+def main(stdscr):
+    curses.curs_set(0)
+    curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)
+    entry, shown, expr = "", None, ""
+    sel = (1, 1)
+    while True:
+        try:
+            draw(stdscr, *stdscr.getmaxyx(), entry, shown, expr, sel)
+            stdscr.refresh()
+        except curses.error:
+            pass
+        ch = stdscr.getch()
+        if ch in (ord("q"), 27, 3):
+            return
+        if ch == curses.KEY_RESIZE:
+            continue
+        if ch in (curses.KEY_UP, curses.KEY_DOWN, curses.KEY_LEFT, curses.KEY_RIGHT):
+            dy = {curses.KEY_UP: -1, curses.KEY_DOWN: 1}.get(ch, 0)
+            dx = {curses.KEY_LEFT: -1, curses.KEY_RIGHT: 1}.get(ch, 0)
+            sel = ((sel[0] + dy) % ROWS, (sel[1] + dx) % COLS)
+            continue
+        if ch in (curses.KEY_ENTER, 10, 13, ord("=")):
+            label = "="
+        elif ch in (curses.KEY_BACKSPACE, 127, 8):
+            label = "DEL"
+        elif ch == ord(" "):
+            label = BUTTONS[sel[0]][sel[1]]
+        elif chr(ch) in FOCUS:
+            label = chr(ch)
+        else:
+            continue
+        sel = FOCUS[label]
+        entry, shown = press(label, entry, shown)
+        expr = entry if shown is not None else ""
+
+
+if __name__ == "__main__":
+    if not sys.stdin.isatty():
+        sys.exit("calc va eseguito in un terminale")
+    curses.wrapper(main)
