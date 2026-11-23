@@ -1,30 +1,37 @@
-# Manutenzione di calc
+# Maintenance guide
 
-`calc` è il sorgente e l'eseguibile della calcolatrice TUI. Su Linux usa
-Python 3 e il modulo standard `curses`, senza compilazione o configurazione.
-Il repository contiene la copia di sviluppo da eseguire con `./calc`.
+`calc` is both the Bash source and the executable. It uses `stty` and ANSI
+escape sequences for the terminal, and GNU `bc` for decimal arithmetic.
+Run the development copy with `./calc`.
 
-- `evaluate` calcola l'espressione e formatta il risultato. Mantieni i limiti
-  agli input aritmetici, il blocco di `**` e l'isolamento dei built-in di Python.
-- `press` aggiorna l'espressione e il risultato. Dopo un risultato, un operatore
-  aritmetico del tastierino riprende dal valore mostrato, mentre una cifra inizia
-  una nuova espressione.
-- `BUTTONS` e `FOCUS` determinano la griglia e i tasti digitabili. `main` gestisce
-  gli input e chiama `draw` per il display e il tastierino. L'ingresso verifica
-  che stdin sia un terminale e avvia `main` tramite `curses.wrapper` per il
-  ripristino del terminale all'uscita.
-- `tests/test_calc.py` verifica il calcolo e lo stato del tastierino con
-  `unittest`. Carica lo script senza avviare l'interfaccia.
+- `parse_expression` recognizes numeric literals and applies operator
+  precedence. `evaluate` passes the reconstructed expression to `bc`,
+  reports errors, and formats the result. Reject `**` and tokens outside the
+  arithmetic grammar.
+- `press` updates the expression and displayed result. After evaluation,
+  an arithmetic operator continues from the displayed value and a digit
+  starts a new expression.
+- `buttons` defines the keypad and its recognized labels. `read_key` reads
+  keys and ANSI sequences, including SGR mouse events. `main` and `draw`
+  share keypad geometry for hit testing and focus movement. `draw` writes
+  within the upper-left frame on the current screen.
+- The `Q` button and `q` shortcut use the same clear-and-quit path. On exit,
+  restore the saved `stty` settings, show the cursor, and disable mouse
+  reporting.
+- `tests/test_calc.py` sources the Bash functions for arithmetic checks and
+  drives the executable through a pseudoterminal for interaction tests.
 
-Dalla directory del progetto:
+From the repository root, check Bash syntax, run the tests, and verify the diff.
 
 ```bash
+bash -n calc
 python3 -m unittest discover -s tests -v
 git diff --check
 ```
 
-Per la prova interattiva, esegui `./calc` in un terminale a colori da almeno
-80 colonne e 24 righe, digita `7*8`, premi Invio, verifica `56` ed esci con
-`q`. Per completare una modifica, esegui i controlli pertinenti e rivedi il diff.
-Aggiorna il README e questa guida quando cambiano i comandi, la struttura,
-i vincoli sul comportamento o le verifiche.
+For a manual check, run `./calc` in a color terminal with at least 36 columns
+and 22 rows. Enter `7*8` using a mix of clicks and arrow keys with Space,
+then press Enter and confirm `56`. Activate `Q` to check that it clears the
+screen. Review the diff and run the relevant checks before finishing.
+Update the README and this guide when commands, structure, behavior
+invariants, or verification steps change.

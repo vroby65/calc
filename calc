@@ -1,123 +1,288 @@
-#!/usr/bin/env python3
-"""Calcolatrice TUI: display in alto e griglia di tasti come una calcolatrice GUI."""
-import curses
-import sys
+#!/usr/bin/env bash
 
-BUTTONS = [
-    ["C", "DEL", "(", ")"],
-    ["7", "8", "9", "/"],
-    ["4", "5", "6", "*"],
-    ["1", "2", "3", "-"],
-    ["0", ".", "=", "+"],
-]
-ROWS, COLS = len(BUTTONS), len(BUTTONS[0])
-BW, BH = 8, 3
-GRID_W, GRID_H = COLS * BW, ROWS * BH
-DISP_H = 4
-TOTAL_W = GRID_W
-TOTAL_H = DISP_H + 1 + GRID_H
-ALLOWED = set("0123456789.+-*/()%")
-FOCUS = {label: (r, c) for r, row in enumerate(BUTTONS) for c, label in enumerate(row)}
-HINT = "frecce: muovi   spazio: premi   invio: calcola   q: esci"
+buttons=(C DEL '(' ')' 7 8 9 / 4 5 6 '*' 1 2 3 - 0 . '=' + Q)
+readonly key_columns=4 key_rows=5 key_width=8 key_height=3
+readonly keypad_left=3 keypad_top=7
+readonly quit_index=$((key_columns * key_rows))
+readonly quit_left=$((keypad_left + (key_columns - 1) * key_width))
+readonly quit_row=$((keypad_top - 1))
+readonly frame_width=$((key_columns * key_width + 4))
+readonly frame_height=$((keypad_top + key_rows * key_height))
 
+# Consume tokens from remaining and return a bc expression in parsed.
+parse_expression() {
+    local minimum=$1 left operator precedence sign=1
+    while [[ $remaining == [+-]* ]]; do
+        [[ $remaining == -* ]] && sign=$((-sign))
+        remaining=${remaining:1}
+    done
+    if [[ $remaining == '('* ]]; then
+        remaining=${remaining:1}
+        parse_expression 1 && [[ $remaining == ')'* ]] || return 1
+        left=$parsed
+        remaining=${remaining:1}
+    elif [[ $remaining =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+) ]]; then
+        left=${BASH_REMATCH[0]}
+        if [[ $left == 0* && $left != *.* && $left == *[1-9]* ]]; then
+            return 1
+        fi
+        remaining=${remaining:${#left}}
+    else
+        return 1
+    fi
+    (( sign < 0 )) && left="(-$left)"
 
-def evaluate(text):
-    if not text or "**" in text or set(text) - ALLOWED:
-        return "Error"
-    try:
-        value = eval(text, {"__builtins__": {}}, {})
-    except Exception:
-        return "Error"
-    if isinstance(value, float):
-        if value.is_integer():
-            return str(int(value))
-        return str(round(value, 10))
-    return str(value)
+    while :; do
+        case $remaining in
+            //*) operator=//; precedence=2 ;;
+            [*/%]*) operator=${remaining:0:1}; precedence=2 ;;
+            [+-]*) operator=${remaining:0:1}; precedence=1 ;;
+            *) break ;;
+        esac
+        (( precedence >= minimum )) || break
+        remaining=${remaining:${#operator}}
+        parse_expression "$((precedence + 1))" || return 1
+        case $operator in
+            //) left="f($left,$parsed)" ;;
+            %) left="r($left,$parsed)" ;;
+            *) left="($left $operator $parsed)" ;;
+        esac
+    done
+    parsed=$left
+}
 
-
-def press(label, entry, shown):
-    """Applica un tasto: ritorna (espressione, risultato mostrato)."""
-    if label == "C":
-        return "", None
-    if label == "DEL":
-        return entry[:-1], None
-    if label == "=":
-        return entry, (evaluate(entry) if entry else None)
-    if shown is not None:
-        entry = shown if label in "+-*/" else ""
-    return entry + label, None
-
-
-def put_text(win, y, x, width, text, attr=0):
-    text = text[-width:] if len(text) > width else text
-    if text:
-        win.addstr(y, x + width - len(text), text, attr)
-
-
-def box(win, y, x, w, h, attr=0):
-    win.addstr(y, x, "\u250c" + "\u2500" * (w - 2) + "\u2510", attr)
-    for i in range(1, h - 1):
-        win.addstr(y + i, x, "\u2502" + " " * (w - 2) + "\u2502", attr)
-    win.addstr(y + h - 1, x, "\u2514" + "\u2500" * (w - 2) + "\u2518", attr)
-
-
-def draw(win, h, w, entry, shown, expr, sel):
-    if h < TOTAL_H or w < TOTAL_W:
-        win.addstr(0, 0, "Terminale troppo piccolo"[: max(0, w - 1)])
+evaluate() {
+    local remaining=$1 parsed result
+    if ! parse_expression 1 || [[ -n $remaining ]]; then
+        printf 'Error\n'
         return
-    y0, x0 = (h - TOTAL_H) // 2, (w - TOTAL_W) // 2
-    box(win, y0, x0, TOTAL_W, DISP_H)
-    put_text(win, y0 + 1, x0 + 1, TOTAL_W - 2, expr, curses.A_DIM)
-    put_text(win, y0 + 2, x0 + 1, TOTAL_W - 2, shown or entry or "0", curses.A_BOLD)
-    gy = y0 + DISP_H + 1
-    for r, row in enumerate(BUTTONS):
-        for c, label in enumerate(row):
-            y, x = gy + r * BH, x0 + c * BW
-            attr = curses.color_pair(1) if (r, c) == sel else 0
-            box(win, y, x, BW, BH, attr)
-            win.addstr(y + 1, x + 1 + (BW - 2 - len(label)) // 2, label, attr | curses.A_BOLD)
-    if h > TOTAL_H and w >= len(HINT):
-        win.addstr(y0 + TOTAL_H, x0, HINT, curses.A_DIM)
+    fi
 
+    # bc truncates integer division toward zero. f() rounds down, r() keeps
+    # the divisor's sign, and n() rounds the result to 10 decimal places.
+    result=$(
+        unset POSIXLY_CORRECT
+        LC_ALL=C BC_ENV_ARGS='' BC_LINE_LENGTH=0 bc -q 2>&1 <<BC
+scale=30
+define f(a,b) {
+    auto s,q
+    s=scale
+    scale=0
+    q=a/b
+    scale=s
+    if (a!=q*b && ((a<0 && b>0) || (a>0 && b<0))) q=q-1
+    return(q)
+}
+define r(a,b) {
+    return(a-b*f(a,b))
+}
+define n(x) {
+    auto s,y,d
+    s=scale
+    scale=10
+    y=x/1
+    scale=s
+    d=x-y
+    if (d<0) d=-d
+    if (d>.00000000005 || (d==.00000000005 && r(y*10000000000,2)!=0)) {
+        if (x<0) return(y-.0000000001)
+        return(y+.0000000001)
+    }
+    return(y)
+}
+n($parsed)
+BC
+    )
+    if [[ ! $result =~ ^-?([0-9]*[.])?[0-9]+$ ]]; then
+        printf 'Error\n'
+        return
+    fi
+    case $result in
+        .*) result=0$result ;;
+        -.*) result=-0${result#-} ;;
+    esac
+    if [[ $result == *.* ]]; then
+        while [[ $result == *0 ]]; do result=${result%0}; done
+        result=${result%.}
+    fi
+    printf '%s\n' "$result"
+}
 
-def main(stdscr):
-    curses.curs_set(0)
-    curses.use_default_colors()
-    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_CYAN)
-    entry, shown, expr = "", None, ""
-    sel = (1, 1)
-    while True:
-        try:
-            draw(stdscr, *stdscr.getmaxyx(), entry, shown, expr, sel)
-            stdscr.refresh()
-        except curses.error:
-            pass
-        ch = stdscr.getch()
-        if ch in (ord("q"), 27, 3):
-            return
-        if ch == curses.KEY_RESIZE:
-            continue
-        if ch in (curses.KEY_UP, curses.KEY_DOWN, curses.KEY_LEFT, curses.KEY_RIGHT):
-            dy = {curses.KEY_UP: -1, curses.KEY_DOWN: 1}.get(ch, 0)
-            dx = {curses.KEY_LEFT: -1, curses.KEY_RIGHT: 1}.get(ch, 0)
-            sel = ((sel[0] + dy) % ROWS, (sel[1] + dx) % COLS)
-            continue
-        if ch in (curses.KEY_ENTER, 10, 13, ord("=")):
-            label = "="
-        elif ch in (curses.KEY_BACKSPACE, 127, 8):
-            label = "DEL"
-        elif ch == ord(" "):
-            label = BUTTONS[sel[0]][sel[1]]
-        elif chr(ch) in FOCUS:
-            label = chr(ch)
-        else:
-            continue
-        sel = FOCUS[label]
-        entry, shown = press(label, entry, shown)
-        expr = entry if shown is not None else ""
+press() {
+    local label=$1
+    case $label in
+        C) entry=; shown= ;;
+        DEL) entry=${entry%?}; shown= ;;
+        =)
+            if [[ -n $entry ]]; then shown=$(evaluate "$entry"); fi
+            ;;
+        *)
+            if [[ -n $shown ]]; then
+                case $label in
+                    [*/+-]) entry=$shown ;;
+                    *) entry= ;;
+                esac
+            fi
+            entry+=$label
+            shown=
+            ;;
+    esac
+}
 
+draw() {
+    local rows=$1 columns=$2
+    local expr='' result row col y index label left right style top middle bottom
+    local rule='──────────────────────────────'
+    (( rows >= frame_height && columns >= frame_width )) || return 0
 
-if __name__ == "__main__":
-    if not sys.stdin.isatty():
-        sys.exit("calc va eseguito in un terminale")
-    curses.wrapper(main)
+    [[ -n $shown ]] && expr=$entry
+    result=${shown:-${entry:-0}}
+    (( ${#expr} > 30 )) && expr=${expr: -30}
+    (( ${#result} > 30 )) && result=${result: -30}
+    printf '\e[1;1H┌──%s──┐\e[2;1H│ ┌%s┐ │' "$rule" "$rule"
+    printf '\e[3;1H│ │\e[2m%30s\e[0m│ │' "$expr"
+    printf '\e[4;1H│ │\e[1m%30s\e[0m│ │' "$result"
+    printf '\e[5;1H│ └%s┘ │' "$rule"
+    style=
+    (( selected == quit_index )) && style=$'\e[30;46m'
+    printf '\e[%d;1H│%*s%s[  \e[1mQ\e[22m   ]\e[0m │' \
+        "$quit_row" "$((quit_left - 2))" '' "$style"
+
+    for ((row = 0; row < key_rows; row++)); do
+        top='' middle='' bottom=''
+        y=$((keypad_top + row * key_height))
+        for ((col = 0; col < key_columns; col++)); do
+            index=$((row * key_columns + col))
+            label=${buttons[index]}
+            left=$(((key_width - 2 - ${#label}) / 2))
+            right=$((key_width - 2 - ${#label} - left))
+            style=
+            (( index == selected )) && style=$'\e[30;46m'
+            top+=$style'┌──────┐'$'\e[0m'
+            printf -v middle '%s%s│%*s\e[1m%s\e[22m%*s│\e[0m' \
+                "$middle" "$style" "$left" '' "$label" "$right" ''
+            bottom+=$style'└──────┘'$'\e[0m'
+        done
+        printf '\e[%d;1H│ %s │\e[%d;1H│ %s │\e[%d;1H│ %s │' \
+            "$y" "$top" "$((y + 1))" "$middle" "$((y + 2))" "$bottom"
+    done
+    printf '\e[%d;1H└──%s──┘' "$frame_height" "$rule"
+}
+
+read_key() {
+    local prefix char status
+    IFS= read -r -N 1 -t 0.25 key
+    status=$?
+    [[ -n $key ]] || return "$status"
+    [[ $key == $'\e' ]] || return 0
+    IFS= read -r -N 1 -t 0.1 prefix || return 0
+    [[ $prefix == '[' || $prefix == O ]] || return 0
+    key=$prefix
+    while IFS= read -r -N 1 -t 0.1 char; do
+        key+=$char
+        [[ $char == [@-~] ]] && break
+    done
+    return 0
+}
+
+main() {
+    local entry='' shown='' selected=5 key index row col rows columns resize_pending=1
+    local click_pattern='^\[<0;([1-9][0-9]{0,4});([1-9][0-9]{0,4})M$'
+    if [[ ! -t 0 || ! -t 1 ]]; then
+        printf 'Run calc in a terminal.\n' >&2
+        return 1
+    fi
+    if ! command -v bc >/dev/null; then
+        printf 'calc requires GNU bc.\n' >&2
+        return 1
+    fi
+
+    tty_state=$(stty -g) || return 1
+    trap 'stty "$tty_state"; printf "\e[0m\e[?1000l\e[?1006l\e[?25h"' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'resize_pending=1' WINCH
+    stty raw -echo || return 1
+    printf '\e[?25l\e[?1000h\e[?1006h'
+
+    while :; do
+        if (( resize_pending )); then
+            resize_pending=0
+            read -r rows columns <<< "$(stty size)"
+            if (( rows < 1 || columns < 1 )); then
+                rows=24 columns=80
+            fi
+            draw "$rows" "$columns"
+        fi
+        read_key
+        case $? in
+            0) ;;
+            1) return 0 ;;
+            *) continue ;;
+        esac
+        row=$((selected / key_columns))
+        col=$((selected % key_columns))
+        case $key in
+            $'\e'|$'\x03') return 0 ;;
+            '[A'|OA)
+                if (( selected == quit_index )); then
+                    selected=$((quit_index - 1))
+                elif (( selected == key_columns - 1 )); then
+                    selected=$quit_index
+                else
+                    selected=$(((row + key_rows - 1) % key_rows * key_columns + col))
+                fi
+                ;;
+            '[B'|OB)
+                if (( selected == quit_index )); then
+                    selected=$((key_columns - 1))
+                elif (( selected == quit_index - 1 )); then
+                    selected=$quit_index
+                else
+                    selected=$(((row + 1) % key_rows * key_columns + col))
+                fi
+                ;;
+            '[C'|OC)
+                (( selected == quit_index )) || selected=$((row * key_columns + (col + 1) % key_columns))
+                ;;
+            '[D'|OD)
+                (( selected == quit_index )) || selected=$((row * key_columns + (col + key_columns - 1) % key_columns))
+                ;;
+            '[<'*)
+                [[ $key =~ $click_pattern ]] || continue
+                (( rows >= frame_height && columns >= frame_width )) || continue
+                col=${BASH_REMATCH[1]}
+                row=${BASH_REMATCH[2]}
+                if (( row == quit_row && col >= quit_left && col < quit_left + key_width )); then
+                    key=Q
+                else
+                    col=$((col - keypad_left))
+                    row=$((row - keypad_top))
+                    (( col >= 0 && col < key_columns * key_width &&
+                       row >= 0 && row < key_rows * key_height )) || continue
+                    key=${buttons[row / key_height * key_columns + col / key_width]}
+                fi
+                ;;
+            $'\r'|$'\n') key='=' ;;
+            $'\x7f'|$'\b') key=DEL ;;
+            ' ') key=${buttons[selected]} ;;
+        esac
+        if [[ $key == [qQ] ]]; then
+            printf '\e[2J\e[H'
+            return 0
+        fi
+        for index in "${!buttons[@]}"; do
+            if [[ $key == "${buttons[index]}" ]]; then
+                selected=$index
+                press "$key"
+                break
+            fi
+        done
+        draw "$rows" "$columns"
+    done
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    main
+fi
