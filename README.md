@@ -1,12 +1,22 @@
 # calc
 
 A Bash calculator for the Linux terminal. The display and keypad sit in the
-upper-left corner, leaving the surrounding terminal content visible.
+upper-left corner, leaving the surrounding terminal content visible. The
+palette follows `fm`, with dark gray panels, muted yellow labels, a bright
+yellow result, and a teal focus highlight.
 
 ## Run
 
-You need Bash, `stty`, GNU `bc`, and a terminal that supports ANSI escape
-sequences and Unicode. The calculator uses 36 columns and 22 rows.
+You need Bash, `stty`, GNU `bc`, and a terminal with ANSI 256-color and
+Unicode support. The calculator uses 36 columns and 22 rows.
+
+Download the script and make it executable.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vroby65/calc/main/calc -o calc && chmod +x calc
+```
+
+Run it with `./calc`. To get the tests too, clone the repository.
 
 ```bash
 git clone https://github.com/vroby65/calc.git

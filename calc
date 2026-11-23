@@ -9,6 +9,11 @@ readonly quit_row=$((keypad_top - 1))
 readonly frame_width=$((key_columns * key_width + 4))
 readonly frame_height=$((keypad_top + key_rows * key_height))
 
+# Panel, header, and cursor colors from fm's 256-color theme.
+readonly panel_color=$'\e[38;5;144;48;5;237m'
+readonly result_color=$'\e[1;33;48;5;237m'
+readonly focus_color=$'\e[38;5;252;48;5;23m'
+
 # Consume tokens from remaining and return a bc expression in parsed.
 parse_expression() {
     local minimum=$1 left operator precedence sign=1
@@ -139,14 +144,14 @@ draw() {
     result=${shown:-${entry:-0}}
     (( ${#expr} > 30 )) && expr=${expr: -30}
     (( ${#result} > 30 )) && result=${result: -30}
-    printf '\e[1;1H┌──%s──┐\e[2;1H│ ┌%s┐ │' "$rule" "$rule"
-    printf '\e[3;1H│ │\e[2m%30s\e[0m│ │' "$expr"
-    printf '\e[4;1H│ │\e[1m%30s\e[0m│ │' "$result"
+    printf '%s\e[1;1H┌──%s──┐\e[2;1H│ ┌%s┐ │' "$panel_color" "$rule" "$rule"
+    printf '\e[3;1H│ │\e[2m%30s\e[22m│ │' "$expr"
+    printf '\e[4;1H│ │%s%30s\e[0m%s│ │' "$result_color" "$result" "$panel_color"
     printf '\e[5;1H│ └%s┘ │' "$rule"
     style=
-    (( selected == quit_index )) && style=$'\e[30;46m'
-    printf '\e[%d;1H│%*s%s[  \e[1mQ\e[22m   ]\e[0m │' \
-        "$quit_row" "$((quit_left - 2))" '' "$style"
+    (( selected == quit_index )) && style=$focus_color
+    printf '\e[%d;1H│%*s%s[  \e[1mQ\e[22m   ]%s │' \
+        "$quit_row" "$((quit_left - 2))" '' "$style" "$panel_color"
 
     for ((row = 0; row < key_rows; row++)); do
         top='' middle='' bottom=''
@@ -156,17 +161,18 @@ draw() {
             label=${buttons[index]}
             left=$(((key_width - 2 - ${#label}) / 2))
             right=$((key_width - 2 - ${#label} - left))
-            style=
-            (( index == selected )) && style=$'\e[30;46m'
-            top+=$style'┌──────┐'$'\e[0m'
-            printf -v middle '%s%s│%*s\e[1m%s\e[22m%*s│\e[0m' \
+            style=$panel_color
+            (( index == selected )) && style=$focus_color
+            top+=$style'┌──────┐'
+            printf -v middle '%s%s│%*s\e[1m%s\e[22m%*s│' \
                 "$middle" "$style" "$left" '' "$label" "$right" ''
-            bottom+=$style'└──────┘'$'\e[0m'
+            bottom+=$style'└──────┘'
         done
-        printf '\e[%d;1H│ %s │\e[%d;1H│ %s │\e[%d;1H│ %s │' \
-            "$y" "$top" "$((y + 1))" "$middle" "$((y + 2))" "$bottom"
+        printf '\e[%d;1H│ %s%s │\e[%d;1H│ %s%s │\e[%d;1H│ %s%s │' \
+            "$y" "$top" "$panel_color" "$((y + 1))" "$middle" "$panel_color" \
+            "$((y + 2))" "$bottom" "$panel_color"
     done
-    printf '\e[%d;1H└──%s──┘' "$frame_height" "$rule"
+    printf '\e[%d;1H└──%s──┘\e[0m' "$frame_height" "$rule"
 }
 
 read_key() {

@@ -14,7 +14,8 @@ Run the development copy with `./calc`.
 - `buttons` defines the keypad and its recognized labels. `read_key` reads
   keys and ANSI sequences, including SGR mouse events. `main` and `draw`
   share keypad geometry for hit testing and focus movement. `draw` writes
-  within the upper-left frame on the current screen.
+  within the upper-left frame on the current screen. It uses `fm`'s ANSI
+  panel, header, and cursor colors and resets the style after the final row.
 - The `Q` button and `q` shortcut use the same clear-and-quit path. On exit,
   restore the saved `stty` settings, show the cursor, and disable mouse
   reporting.

@@ -114,7 +114,8 @@ class TerminalTests(unittest.TestCase):
         with terminal() as (master, slave, process, settings):
             opened = self.read_until(master, FRAME_END)
             self.assertIn(MOUSE_ON, opened)
-            self.assertIn(FRAME_TOP, opened)
+            self.assertIn(b"\x1b[38;5;144;48;5;237m" + FRAME_TOP, opened)
+            self.assertIn(b"\x1b[1;33;48;5;237m" + b"0".rjust(30), opened)
             self.assertNotIn(b"\x1b[2J", opened)
             self.assertNotIn(b"\x1b[?1049", opened)
             self.assertNotIn(b"arrows:", opened)
@@ -177,7 +178,7 @@ class TerminalTests(unittest.TestCase):
             self.read_until(master, FRAME_END)
             # 8 → 9 → / → ) → Q
             os.write(master, b"\x1b[C\x1b[C\x1b[A\x1b[A")
-            self.read_until(master, b"\x1b[30;46m[  \x1b[1mQ")
+            self.read_until(master, b"\x1b[38;5;252;48;5;23m[  \x1b[1mQ")
             os.write(master, b" ")
             self.assertEqual(process.wait(timeout=4), 0)
             self.assertIn(CLEAR_SCREEN, self.read_until(master, TERMINAL_RESTORED))
